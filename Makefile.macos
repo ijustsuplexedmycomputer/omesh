@@ -1,0 +1,173 @@
+# =============================================================================
+# Omesh - Makefile for macOS
+# =============================================================================
+#
+# IMPORTANT: Omesh is written in aarch64 Linux assembly using Linux syscalls.
+# It cannot run natively on macOS even on Apple Silicon because:
+#   1. Linux syscalls != macOS syscalls
+#   2. ELF binary format != Mach-O format
+#
+# Options for running on macOS:
+#   1. Use Docker with Linux arm64 image (recommended)
+#   2. Use Lima (Linux virtual machines on macOS)
+#   3. Use UTM/QEMU with Linux arm64 VM
+#
+# This Makefile helps build the Linux binary using Docker.
+#
+# =============================================================================
+
+.PHONY: all docker-build docker-run docker-shell help check-docker
+
+DOCKER_IMAGE = omesh-builder
+DOCKER_CONTAINER = omesh-dev
+
+# Default target
+all: help
+
+help:
+	@echo ""
+	@echo "Omesh Build System for macOS"
+	@echo "============================"
+	@echo ""
+	@echo "Omesh is a Linux aarch64 binary. To build/run on macOS, use Docker:"
+	@echo ""
+	@echo "  make docker-build    Build using Docker (Linux arm64)"
+	@echo "  make docker-run      Run omesh in Docker container"
+	@echo "  make docker-shell    Open shell in build container"
+	@echo "  make lima-setup      Set up Lima VM for native-speed execution"
+	@echo ""
+	@echo "Quick start:"
+	@echo "  make docker-build && make docker-run"
+	@echo ""
+
+# Check Docker is available
+check-docker:
+	@command -v docker >/dev/null 2>&1 || { \
+		echo "Error: Docker not found."; \
+		echo "Install Docker Desktop for Mac: https://docker.com/products/docker-desktop"; \
+		exit 1; \
+	}
+	@docker info >/dev/null 2>&1 || { \
+		echo "Error: Docker daemon not running."; \
+		echo "Please start Docker Desktop."; \
+		exit 1; \
+	}
+
+# Build the Docker image for building
+docker-image: check-docker
+	@echo "Building Docker image..."
+	@docker build -t $(DOCKER_IMAGE) -f - . <<'EOF'
+FROM arm64v8/ubuntu:22.04
+RUN apt-get update && apt-get install -y \
+    binutils \
+    make \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /omesh
+EOF
+	@echo "Docker image ready: $(DOCKER_IMAGE)"
+
+# Build omesh using Docker
+docker-build: check-docker
+	@echo "Building omesh in Docker..."
+	@if ! docker image inspect $(DOCKER_IMAGE) >/dev/null 2>&1; then \
+		$(MAKE) -f Makefile.macos docker-image; \
+	fi
+	@docker run --rm \
+		--platform linux/arm64 \
+		-v "$(PWD):/omesh" \
+		$(DOCKER_IMAGE) \
+		make clean all
+	@echo ""
+	@echo "Build complete: build/omesh"
+	@file build/omesh 2>/dev/null || true
+
+# Run omesh in Docker
+docker-run: check-docker
+	@if [ ! -f build/omesh ]; then \
+		echo "Error: build/omesh not found. Run 'make docker-build' first."; \
+		exit 1; \
+	fi
+	@echo "Starting omesh in Docker..."
+	@docker run -it --rm \
+		--platform linux/arm64 \
+		-v "$(PWD):/omesh" \
+		-v "$(HOME)/.omesh:/root/.omesh" \
+		-p 8080:8080 \
+		-p 9000:9000 \
+		$(DOCKER_IMAGE) \
+		./build/omesh $(ARGS)
+
+# Run omesh HTTP server in Docker
+docker-http: check-docker
+	@$(MAKE) -f Makefile.macos docker-run ARGS="--http 8080"
+
+# Run omesh setup in Docker
+docker-setup: check-docker
+	@$(MAKE) -f Makefile.macos docker-run ARGS="--setup"
+
+# Interactive shell in Docker
+docker-shell: check-docker
+	@if ! docker image inspect $(DOCKER_IMAGE) >/dev/null 2>&1; then \
+		$(MAKE) -f Makefile.macos docker-image; \
+	fi
+	@docker run -it --rm \
+		--platform linux/arm64 \
+		-v "$(PWD):/omesh" \
+		-v "$(HOME)/.omesh:/root/.omesh" \
+		-p 8080:8080 \
+		-p 9000:9000 \
+		$(DOCKER_IMAGE) \
+		/bin/bash
+
+# Lima setup instructions
+lima-setup:
+	@echo ""
+	@echo "Lima Setup for Native-Speed Execution"
+	@echo "======================================"
+	@echo ""
+	@echo "Lima runs Linux VMs with near-native performance on Apple Silicon."
+	@echo ""
+	@echo "1. Install Lima:"
+	@echo "   brew install lima"
+	@echo ""
+	@echo "2. Create an Ubuntu ARM64 instance:"
+	@echo "   limactl start --name=omesh template://ubuntu-lts"
+	@echo ""
+	@echo "3. Copy omesh source to the VM:"
+	@echo "   limactl copy -r . omesh:/tmp/omesh"
+	@echo ""
+	@echo "4. Shell into the VM and build:"
+	@echo "   limactl shell omesh"
+	@echo "   cd /tmp/omesh"
+	@echo "   sudo apt-get update && sudo apt-get install -y binutils make"
+	@echo "   make"
+	@echo "   ./build/omesh --setup"
+	@echo ""
+	@echo "5. For networking, Lima forwards ports automatically."
+	@echo "   Access omesh at http://localhost:8080"
+	@echo ""
+
+# Clean
+clean:
+	rm -rf build
+
+# =============================================================================
+# Alternative: Native macOS build (experimental, won't run)
+# =============================================================================
+# This would build a Mach-O binary but it won't work because syscalls differ.
+# Kept here for reference only.
+
+AS_MACOS = as
+LD_MACOS = ld
+ASFLAGS_MACOS = -arch arm64
+
+native-build-experimental:
+	@echo "WARNING: This builds a Mach-O binary that WILL NOT RUN."
+	@echo "Omesh uses Linux syscalls which don't exist on macOS."
+	@echo ""
+	@echo "This is only useful for checking assembly syntax compatibility."
+	@echo ""
+	@read -p "Continue anyway? [y/N] " resp && [ "$$resp" = "y" ]
+	mkdir -p build
+	# Try to assemble (will likely fail on Linux-specific directives)
+	$(AS_MACOS) $(ASFLAGS_MACOS) -o build/test.o src/hal/features.s || echo "Assembly failed (expected)"
