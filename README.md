@@ -1,6 +1,6 @@
 # Omesh
 
-Distributed full-text search engine in pure aarch64 assembly.
+Distributed full-text search engine for aarch64 .
 
 ## Build
 
@@ -42,7 +42,7 @@ Search from either node finds documents on both.
 
 ## Requirements
 
-- aarch64 Linux (Raspberry Pi, ARM server, WSL2)
+- aarch64 Linux (Raspberry Pi, ARM server, WSL2 on snapdragon)
 - GNU binutils (`apt install binutils`)
 
 ## License
